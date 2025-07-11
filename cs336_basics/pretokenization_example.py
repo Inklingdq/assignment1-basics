@@ -6,6 +6,7 @@ import regex
 import sys
 from typing import Optional
 import heapq
+from multiprocessing import Pool
 
 
 PAT = r"""'(?:[sdmt]|ll|ve|re)| ?\p{L}+| ?\p{N}+| ?[^\s\p{L}\p{N}]+|\s+(?!\S)|\s+"""
@@ -204,7 +205,6 @@ def train_bpe(filename: str, max_vocab:int, special_tokens: list[str])->tuple[di
 
 ## Usage
 if __name__ == "__main__":
-    from multiprocessing import Pool
     filename = sys.argv[1] if len(sys.argv) > 1 else "test.txt"
     max_vocab = int(sys.argv[2]) if len(sys.argv) > 2 else 1000
     special_tokens = list(sys.argv[3]) if len(sys.argv) > 3 else ["<|endoftext|>"]
