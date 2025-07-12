@@ -11,7 +11,14 @@ from multiprocessing import Pool
 
 PAT = r"""'(?:[sdmt]|ll|ve|re)| ?\p{L}+| ?\p{N}+| ?[^\s\p{L}\p{N}]+|\s+(?!\S)|\s+"""
 
-
+class BPEItem:
+    def __init__(self, frequency: int, pair: tuple[bytes, bytes]) -> None:
+        self.frequency: int = frequency
+        self.pair: tuple[bytes, bytes] = pair
+    def __lt__(self, other: BPEItem) -> bool:
+        if self.frequency != other.frequency:
+            return self.frequency > other.frequency
+        return self.pair > other.pair
 class Node:
     """
     A node in a doubly linked list.
@@ -115,16 +122,16 @@ def train_bpe(filename: str, max_vocab:int, special_tokens: list[str])->tuple[di
         boundaries = find_chunk_boundaries(
             f, num_processes, "<|endoftext|>".encode("utf-8"))
             
-    # The following is a serial implementation, but you can parallelize this 
-    # by sending each start/end pair to a set of processes.
 
     with Pool(num_processes) as p:
         counters = p.map(process_chunk, [(0 if i == 0 else boundaries[i-1], boundaries[i], filename, special_tokens) for i in range(len(boundaries))])
+
     total = reduce(lambda x, y: x + y, counters)
 
     pairs = Counter()
-    vocab = set()
+    vocab = {bytes([i]) for i in range(256)}
     pair_index = {}
+        
     for word, frequencey in total.items():
         bs = word.encode("utf-8")
         prev = None
@@ -134,35 +141,39 @@ def train_bpe(filename: str, max_vocab:int, special_tokens: list[str])->tuple[di
             if prev:
                 prev.update_next(node)
             prev = node
-            vocab.add(a)
             pair = (a, b)
             pairs[pair] += frequencey
             if pair not in pair_index:
                 pair_index[pair] = [node]
             else:
                 pair_index[pair].append(node)
-        vocab.add(bytes([bs[-1]]))
         if prev:
             prev.update_next(Node(bytes([bs[-1]]), word, prev, None))
     for special_token in special_tokens:
-        vocab.add(special_token)
+        vocab.add(special_token.encode("utf-8"))
     merge = []
-    heap = [(-f, p) for p, f in pairs.items()]
+    heap = [BPEItem(f, p) for p, f in pairs.items()]
     heapq.heapify(heap)
+    i = 0 
+    print(len(vocab))
     while len(vocab) < max_vocab:
          if len(heap) == 0:
              break
-         neg_freq, (a, b) = heapq.heappop(heap)
-         if neg_freq == 0:
+         item = heapq.heappop(heap)
+         frequency, (a, b) = item.frequency, item.pair
+        #  i += 1
+        #  if i > 200:
+        #      break
+         if frequency == 0:
              break
-         if -neg_freq != pairs[(a,b)]:  # ← count mismatched ⇒ stale
+         if frequency != pairs[(a,b)]:  # ← count mismatched ⇒ stale
              continue # discard and keep popping
+         
          vocab.add(a+b)
          merge.append((a,b))
-         if (a,b) not in pair_index:
-             continue
+         pairs_to_update = set()
          for node in pair_index[(a,b)]:
-             if not(node.next) or node.next.byte != b:
+             if node.byte != a or not(node.next) or node.next.byte != b:
                  continue
              node.byte = a+b
              prev = node.prev
@@ -171,37 +182,38 @@ def train_bpe(filename: str, max_vocab:int, special_tokens: list[str])->tuple[di
                  if pairs[(prev.byte,a)] == 0:
                      del pairs[(prev.byte,a)]
                  else:
-                     heapq.heappush(heap, (-pairs[(prev.byte, a)], (prev.byte, a)))
-                 pairs[(prev.byte, a + b)] = total[node.pretoken]
-                 heapq.heappush(heap, (-pairs[(prev.byte, a + b)], (prev.byte, a + b)))
+                     pairs_to_update.add((prev.byte, a))
+                 pairs[(prev.byte, a + b)] += total[node.pretoken] 
                  new_pair = (prev.byte, a + b) 
+                 pairs_to_update.add(new_pair)
                  if new_pair not in pair_index:
                      pair_index[new_pair] = [prev]
                  else:
                      pair_index[new_pair].append(prev)
-             if node.next.byte != b:
-                 print(f"Error finding pairs {a}, {b}")
-                 break
+             node.next.byte = None
              node.next = node.next.next
              if node.next:
+                node.next.update_prev(node)
                 pairs[(b, node.next.byte)] -= total[node.pretoken]
                 if pairs[(b, node.next.byte)] == 0:
                     del pairs[(b, node.next.byte)]
                 else:
-                    heapq.heappush(heap, (-pairs[(b, node.next.byte)], (b, node.next.byte)))
-                pairs[(a+b, node.next.byte)] = total[node.pretoken]
-                heapq.heappush(heap, (-pairs[(a+b, node.next.byte)], (a+b, node.next.byte)))
-                new_pair = (a+b, node.next.byte)
+                    pairs_to_update.add((b, node.next.byte))
+                pairs[(a + b, node.next.byte)] += total[node.pretoken]
+                new_pair = (a + b, node.next.byte)
+                pairs_to_update.add(new_pair)
                 if new_pair not in pair_index:
                     pair_index[new_pair] = [node]
                 else:
                     pair_index[new_pair].append(node)
+         for pair in pairs_to_update:
+             heapq.heappush(heap, BPEItem(pairs[pair], pair))
          del pairs[(a,b)]
          del pair_index[(a,b)]
     vocab_dict = {}
     for word in vocab:
         vocab_dict[len(vocab_dict)] = word
-    return (word, merge)
+    return (vocab_dict, merge)
 
 ## Usage
 if __name__ == "__main__":
