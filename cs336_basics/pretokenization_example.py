@@ -129,10 +129,10 @@ def process_chunk(arg: tuple):
             f.seek(segment_start)
             segment = f.read(segment_end - segment_start).decode("utf-8", errors="ignore")
             for text in regex.split("|".join(map(regex.escape, special_tokens)), segment):
-                for line in text.splitlines():
-                    for match in regex.finditer(PAT, line):
+                for match in regex.finditer(PAT, text):
                         token = match.group()
                         local_counter[token] += 1
+
     return local_counter
 
 def train_bpe(filename: str, max_vocab:int, special_tokens: list[str])->tuple[dict[int, bytes], list[tuple[bytes, bytes]]]:
