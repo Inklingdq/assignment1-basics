@@ -1,12 +1,17 @@
 from __future__ import annotations  # allow forward references in type hints
+import cProfile
 from functools import reduce
+import json
 import os
+import pstats
 from typing import BinaryIO, Counter, Optional
 import regex
 import sys
 from typing import Optional
 import heapq
 from multiprocessing import Pool
+import time
+
 
 
 PAT = r"""'(?:[sdmt]|ll|ve|re)| ?\p{L}+| ?\p{N}+| ?[^\s\p{L}\p{N}]+|\s+(?!\S)|\s+"""
@@ -59,27 +64,33 @@ class Node:
         return f"Node(byte={self.byte!r}, pretoken={self.pretoken!r})"
     
 def find_chunk_boundaries(
-    file: BinaryIO,
-    desired_num_chunks: int,
-    split_special_token: bytes,
+    file: BinaryIO, 
+    desired_num_chunks: int, 
+    split_special_tokens: list[bytes],
+    start = 0,
+    end = None,
 ) -> list[int]:
     """
     Chunk the file into parts that can be counted independently.
     May return fewer chunks if the boundaries end up overlapping.
     """
-    assert isinstance(split_special_token, bytes), "Must represent special token as a bytestring"
+    print(desired_num_chunks)
+    for split_special_token in split_special_tokens:
+        assert isinstance(split_special_token, bytes), (
+            "Must represent special token as a bytestring"
+        )
 
     # Get total file size in bytes
-    file.seek(0, os.SEEK_END)
-    file_size = file.tell()
-    file.seek(0)
+    file.seek(start, os.SEEK_END)
+    file_size = end - start if end else file.tell()
+    file.seek(start)
 
     chunk_size = file_size // desired_num_chunks
 
     # Initial guesses for chunk boundary locations, uniformly spaced
     # Chunks start on previous index, don't include last index
-    chunk_boundaries = [i * chunk_size for i in range(desired_num_chunks + 1)]
-    chunk_boundaries[-1] = file_size
+    chunk_boundaries = [i * chunk_size+ start for i in range(desired_num_chunks + 1)]
+    chunk_boundaries[-1] = file_size + start
 
     mini_chunk_size = 4096  # Read ahead by 4k bytes at a time
 
@@ -94,8 +105,9 @@ def find_chunk_boundaries(
                 chunk_boundaries[bi] = file_size
                 break
 
-            # Find the special token in the mini chunk
-            found_at = mini_chunk.find(split_special_token)
+            # Find the special tokens in the mini chunk
+            found_at = [mini_chunk.find(token) for token in split_special_tokens]
+            found_at = min(filter(lambda x: x != -1, found_at), default=-1)
             if found_at != -1:
                 chunk_boundaries[bi] = initial_position + found_at
                 break
@@ -103,30 +115,50 @@ def find_chunk_boundaries(
 
     # Make sure all boundaries are unique, but might be fewer than desired_num_chunks
     return sorted(set(chunk_boundaries))
-
+    
 def process_chunk(arg: tuple):
     start, end, filename, special_tokens = arg
+    print(f"Processing chunk from {start} to {end} in file {filename}")
     local_counter = Counter()
-    with open(filename, 'rb') as f:
-        f.seek(start)
-        chunk = f.read(end - start).decode("utf-8", errors="ignore")
-        for text in regex.split("|".join(map(regex.escape, special_tokens)), chunk):
-                for match in regex.finditer(PAT, text):
-                    token = match.group()
-                    local_counter[token] += 1
+    with open(filename, "rb") as f:
+        segment_boundaries = find_chunk_boundaries(f, int((end-start)//5e5 + 1), [token.encode("utf-8") for token in special_tokens], start, end)
+        for i in range(len(segment_boundaries) - 1):
+            print(f"Processing segment {i} from {segment_boundaries[i]} to {segment_boundaries[i + 1]}")
+            segment_start = segment_boundaries[i]
+            segment_end = segment_boundaries[i + 1]
+            f.seek(segment_start)
+            segment = f.read(segment_end - segment_start).decode("utf-8", errors="ignore")
+            for text in regex.split("|".join(map(regex.escape, special_tokens)), segment):
+                for line in text.splitlines():
+                    for match in regex.finditer(PAT, line):
+                        token = match.group()
+                        local_counter[token] += 1
     return local_counter
 
 def train_bpe(filename: str, max_vocab:int, special_tokens: list[str])->tuple[dict[int, bytes], list[tuple[bytes, bytes]]]:
-    num_processes = 4
+    """Train a BPE tokenizer on the given file.
+    Args:
+        filename (str): The path to the file to train on.
+        max_vocab (int): The maximum vocabulary size.
+        special_tokens (list[str]): A list of special tokens to include in the vocabulary.
+    Returns:
+        tuple: A tuple containing the vocabulary and the merges.
+    """
+    t0 = time.time()
+    print(f"Training BPE on {filename} with max vocab size {max_vocab} and special tokens {special_tokens}")
+    num_processes = 2
     with open(filename, "rb") as f:
         boundaries = find_chunk_boundaries(
-            f, num_processes, "<|endoftext|>".encode("utf-8"))
-            
+            f, num_processes, [b"<|endoftext|>"])
+    print(boundaries)
 
     with Pool(num_processes) as p:
-        counters = p.map(process_chunk, [(0 if i == 0 else boundaries[i-1], boundaries[i], filename, special_tokens) for i in range(len(boundaries))])
+        counters = p.map(process_chunk, [(boundaries[i], boundaries[i+1], filename, special_tokens) for i in range(len(boundaries)-1)])
 
     total = reduce(lambda x, y: x + y, counters)
+    t1 = time.time()
+    print(f"Processed {len(total)} tokens in {t1 - t0:.2f} seconds")
+    print(f"Total unique tokens: {len(total)}")
 
     pairs = Counter()
     vocab = {bytes([i]) for i in range(256)}
@@ -210,9 +242,26 @@ def train_bpe(filename: str, max_vocab:int, special_tokens: list[str])->tuple[di
              heapq.heappush(heap, BPEItem(pairs[pair], pair))
          del pairs[(a,b)]
          del pair_index[(a,b)]
+    print(f"Final vocabulary size: {len(vocab)}")
+    print(f"Total merges: {len(merge)}")
+    t2 = time.time()
+    print(f"Merged {len(merge)} pairs in {t2 - t1:.2f} seconds")
+    print(f"Total time: {t2 - t0:.2f} seconds")
     vocab_dict = {}
+    # find the longest word
+    word = list(vocab)[0]
+    for w in vocab:
+        if len(w) > len(word):
+            word = w
+    print("Longest word:", word)
     for word in vocab:
         vocab_dict[len(vocab_dict)] = word
+    # with open(f"results/{filename.split('/')[1].split('.')[0]}_merge.json", "w") as f:
+    #     for a,b in merge:
+    #         f.write(f"{str(a)} {str(b)}\n")
+    # with open(f"results/{filename.split('/')[1].split('.')[0]}_vocab.json", "w") as f:
+    #     for a,b in vocab_dict.items():
+    #         f.write(f"{a}: {str(b)}\n")
     return (vocab_dict, merge)
 
 ## Usage
@@ -220,7 +269,12 @@ if __name__ == "__main__":
     filename = sys.argv[1] if len(sys.argv) > 1 else "test.txt"
     max_vocab = int(sys.argv[2]) if len(sys.argv) > 2 else 1000
     special_tokens = list(sys.argv[3]) if len(sys.argv) > 3 else ["<|endoftext|>"]
-    train_bpe(filename, max_vocab, special_tokens)
+    with cProfile.Profile() as pr:
+        train_bpe(filename, max_vocab, special_tokens)
+    
+    pstats.Stats(pr).strip_dirs().sort_stats("cumtime").print_stats(20)
+
+
 
 
 
