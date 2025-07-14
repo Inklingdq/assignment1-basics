@@ -140,7 +140,9 @@ def test_roundtrip_single_unicode_character():
         merges_path=MERGES_PATH,
     )
     test_string = "🙃"
+    print(f"test_string: {test_string.encode('utf-8')}")
     encoded_ids = tokenizer.encode(test_string)
+    print(f"encoded_ids: {encoded_ids}")
     decoded_string = tokenizer.decode(encoded_ids)
     assert test_string == decoded_string
 
@@ -222,6 +224,7 @@ def test_roundtrip_unicode_string_with_special_tokens():
     )
     test_string = "Héllò hôw <|endoftext|><|endoftext|> are ü? 🙃<|endoftext|>"
     encoded_ids = tokenizer.encode(test_string)
+    print(f"encoded_ids: {encoded_ids}")
     tokenized_string = [tokenizer.decode([x]) for x in encoded_ids]
     # Ensure the special <|endoftext|> token is preserved
     assert tokenized_string.count("<|endoftext|>") == 3
