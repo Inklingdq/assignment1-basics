@@ -1,5 +1,5 @@
 import torch
-from einops import einsum
+from einops import einsum, rearrange, reduce
 
 class Linear(torch.nn.Module):
     """
@@ -39,3 +39,47 @@ class Embedding(torch.nn.Module):
         """
         return self.weight[indices]
 
+class RMSNorm(torch.nn.Module):
+    """
+    A simple RMSNorm layer that normalizes the input tensor.
+    """
+    def __init__(self, d_model: int, eps: float = 1e-5, device = None, dtype = None):
+        super().__init__()
+        self.d_model = d_model
+        self.eps = eps
+        self.g = torch.nn.Parameter(torch.ones(d_model, device=device, dtype=dtype))
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """
+        Applies RMS normalization to the input tensor `x`.
+        """
+        in_dtype = x.dtype
+        x = x.to(torch.float32)
+        xsquare = einsum(x, x, "... i, ... i -> ... i")
+        mean_square = reduce(xsquare, "... i -> ...", "mean")
+        denominator = rearrange(torch.sqrt(mean_square + self.eps), "... -> ... 1")
+        result = einsum(x, self.g,"... i, i -> ... i") / denominator
+        return result.to(in_dtype)
+    
+class SwiGLU(torch.nn.Module):
+    """
+    A simple SwiGLU feed-forward network.
+    """
+    def __init__(self, d_model: int, d_ff:int, device = None, dtype = None):
+        super().__init__()
+        self.d_model = d_model
+        self.d_ff = d_ff
+        self.w1 = torch.nn.Parameter(torch.empty((d_ff, d_model), device=device, dtype=dtype))
+        self.w2 = torch.nn.Parameter(torch.empty((d_model, d_ff), device=device, dtype=dtype))
+        self.w3 = torch.nn.Parameter(torch.empty((d_ff, d_model), device=device, dtype=dtype)) 
+        self.device = device
+        self.dtype = dtype
+    
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """
+        Applies the SwiGLU transformation to the input tensor `x`.
+        """
+        x1 = einsum(x, self.w1, "... i, j i -> ... j")
+        x1 = einsum(torch.sigmoid(x1), x1, "..., ... -> ...")
+        x3 = einsum(x, self.w3, "... i, j i -> ... j")
+        x2 = einsum(x1, x3, "... i, ... i -> ... i")
+        return einsum(x2, self.w2, "... j, i j -> ... i")

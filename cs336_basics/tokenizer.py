@@ -132,11 +132,24 @@ if __name__ == "__main__":
     file_path = sys.argv[4] if len(sys.argv) > 4 else None
     tokenizer_instance = tokenizer.from_file(vocab_filepath, merges_filepath, special_tokens)
     if file_path:
-        with open(file_path, 'r') as f:
+        output_path = f"results/{file_path.split('/')[-1].split('.')[0]}_encoded.txt"
+        with open(file_path, 'r') as fin, open(output_path, 'w') as fout:
             # text = f.read()
             # original_length = len(text)
             # encoded = tokenizer_instance.encode(text)
             # print(f"Original length: {original_length}, Encoded length: {len(encoded)}. Ratio: {len(encoded) / original_length:.2f}")
-            encoded = [x for x in tokenizer_instance.encode_iterable(f)]
-        open(f"results/{file_path.split('/')[-1].split('.')[0]}_encoded.txt", "w").write("\n".join(map(str, np.array(encoded).astype(np.uint16))))
+            buffer = []
+            chunk_size = 100000  # tweak this based on your memory/IO needs
+
+            for token in tokenizer_instance.encode_iterable(fin):
+                buffer.append(token)
+                if len(buffer) >= chunk_size:
+                    fout.write("\n".join(map(str, np.array(buffer).astype(np.uint16))))
+                    fout.write("\n")
+                    buffer.clear()
+
+            # Write any remaining tokens
+            if buffer:
+                fout.write("\n".join(map(str, np.array(buffer).astype(np.uint16))))
+                fout.write("\n")
 

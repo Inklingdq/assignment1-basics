@@ -258,14 +258,14 @@ def train_bpe(filename: str, max_vocab:int, special_tokens: list[str])->tuple[di
     print("Longest word:", word)
     for word in vocab:
         vocab_dict[len(vocab_dict)] = word
-    with open(f"results/{filename.split('/')[1].split('.')[0]}_merge.json", "w") as f:
-        for a,b in merge:
-            f.write(f"{''.join(byte_to_unicode[byte] for byte in a)} {''.join(byte_to_unicode[byte] for byte in b)}\n")
-    with open(f"results/{filename.split('/')[1].split('.')[0]}_vocab.json", "w") as f:
-        vocab_dict_str = {}
-        for k,v in vocab_dict.items():
-            vocab_dict_str[k] = ''.join(byte_to_unicode[b] for b in v)
-        json.dump(vocab_dict_str, f, ensure_ascii=False, indent=2)
+    # with open(f"results/{filename.split('/')[1].split('.')[0]}_merge.json", "w") as f:
+    #     for a,b in merge:
+    #         f.write(f"{''.join(byte_to_unicode[byte] for byte in a)} {''.join(byte_to_unicode[byte] for byte in b)}\n")
+    # with open(f"results/{filename.split('/')[1].split('.')[0]}_vocab.json", "w") as f:
+    #     vocab_dict_str = {}
+    #     for k,v in vocab_dict.items():
+    #         vocab_dict_str[k] = ''.join(byte_to_unicode[b] for b in v)
+    #     json.dump(vocab_dict_str, f, ensure_ascii=False, indent=2)
     return (vocab_dict, merge)
 
 ## Usage
