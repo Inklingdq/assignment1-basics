@@ -1,8 +1,10 @@
 from __future__ import annotations  # allow forward references in type hints
 import json
+from multiprocessing import Pool
 import sys
 from typing import Iterable
 from cs336_basics.pretokenization_example import PAT, Node
+from psutil import cpu_count
 import regex
 import numpy as np
 
@@ -114,9 +116,9 @@ class tokenizer:
         return encoding
     
     def encode_iterable(self, iterable: Iterable[str]) -> Iterable[int]:
-        for line in tqdm(iterable):
-            for token_id in self.encode(line):
-                yield token_id
+        with Pool(cpu_count(logical=False)) as pool:  # use physical cores
+            for encoded in tqdm(pool.imap(self.encode, iterable, chunksize=128), desc="Encoding"):
+                yield from encoded
 
     def decode(self, ids: list[int]) -> str:
         """
@@ -132,8 +134,8 @@ if __name__ == "__main__":
     file_path = sys.argv[4] if len(sys.argv) > 4 else None
     tokenizer_instance = tokenizer.from_file(vocab_filepath, merges_filepath, special_tokens)
     if file_path:
-        output_path = f"results/{file_path.split('/')[-1].split('.')[0]}_encoded.txt"
-        with open(file_path, 'r') as fin, open(output_path, 'w') as fout:
+        output_path = f"results/{file_path.split('/')[-1].split('.')[0]}_encoded.bin"
+        with open(file_path, 'r') as fin, open(output_path, 'wb') as fout:
             # text = f.read()
             # original_length = len(text)
             # encoded = tokenizer_instance.encode(text)
@@ -144,12 +146,10 @@ if __name__ == "__main__":
             for token in tokenizer_instance.encode_iterable(fin):
                 buffer.append(token)
                 if len(buffer) >= chunk_size:
-                    fout.write("\n".join(map(str, np.array(buffer).astype(np.uint16))))
-                    fout.write("\n")
+                    fout.write(np.array(buffer).astype(np.uint16).tobytes())
                     buffer.clear()
 
             # Write any remaining tokens
             if buffer:
-                fout.write("\n".join(map(str, np.array(buffer).astype(np.uint16))))
-                fout.write("\n")
+                fout.write(np.array(buffer).astype(np.uint16).tobytes())
 

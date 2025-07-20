@@ -378,7 +378,6 @@ def test_encode_special_token_double_newline_non_whitespace():
     reference_ids = reference_tokenizer.encode(corpus_contents, allowed_special={"<|endoftext|>"})
     ids = tokenizer.encode(corpus_contents)
     assert ids == reference_ids
-
     assert tokenizer.decode(ids) == corpus_contents
     assert reference_tokenizer.decode(reference_ids) == corpus_contents
 
