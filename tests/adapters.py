@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 from typing import IO, Any, BinaryIO
 from collections.abc import Iterable
+from einops import rearrange
 from jaxtyping import Float, Int
 
 import numpy.typing as npt
@@ -11,7 +12,7 @@ from torch import Tensor
 from cs336_basics.pretokenization_example import train_bpe
 
 from cs336_basics.tokenizer import tokenizer
-from cs336_basics.modules import Linear, Embedding, RMSNorm, RotaryPositionalEmbedding, SwiGLU, softmax, scaled_dot_product_attetion
+from cs336_basics.modules import Linear, Embedding, RMSNorm, RotaryPositionalEmbedding, SwiGLU, MultiHeadSelfAttention, TransformerBlock, softmax, scaled_dot_product_attention
 
 
 
@@ -91,7 +92,7 @@ def run_swiglu(
     # swiglu.w2.weight.data = w2_weight
     # swiglu.w3.weight.data = w3_weight
     swiglu = SwiGLU(d_model, d_ff)
-    swiglu.load_state_dict({"w1": w1_weight, "w2": w2_weight, "w3": w3_weight})
+    swiglu.load_state_dict({"w1.W": w1_weight, "w2.W": w2_weight, "w3.W": w3_weight})
     return swiglu(in_features)
 
 
@@ -113,7 +114,7 @@ def run_scaled_dot_product_attention(
     Returns:
         Float[Tensor, " ... queries d_v"]: Output of SDPA
     """
-    return scaled_dot_product_attetion(Q, K, V, mask) 
+    return scaled_dot_product_attention(Q, K, V, mask) 
 
 
 def run_multihead_self_attention(
@@ -147,7 +148,10 @@ def run_multihead_self_attention(
         Float[Tensor, " ... sequence_length d_out"]: Tensor with the output of running your optimized, batched multi-headed attention
         implementation with the given QKV projection weights and input features.
     """
-    raise NotImplementedError
+    attention = MultiHeadSelfAttention(d_model, num_heads)
+    attention.load_state_dict({"qkv_weight.W": torch.concat([q_proj_weight, k_proj_weight, v_proj_weight], dim = 0),
+                               "o_proj_weight.W": o_proj_weight})
+    return attention.forward(in_features)
 
 
 def run_multihead_self_attention_with_rope(
@@ -187,7 +191,10 @@ def run_multihead_self_attention_with_rope(
         Float[Tensor, " ... sequence_length d_out"]: Tensor with the output of running your optimized, batched multi-headed attention
         implementation with the given QKV projection weights and input features.
     """
-    raise NotImplementedError
+    attention = MultiHeadSelfAttention(d_model, num_heads, theta, max_seq_len)
+    attention.load_state_dict({"qkv_weight.W": torch.concat([q_proj_weight, k_proj_weight, v_proj_weight], dim = 0),
+                               "o_proj_weight.W": o_proj_weight})
+    return attention.forward(in_features, token_positions)
 
 
 def run_rope(
@@ -283,7 +290,26 @@ def run_transformer_block(
         Float[Tensor, "batch sequence_length d_model"] Tensor with the output of
         running the Transformer block on the input features while using RoPE.
     """
-    raise NotImplementedError
+    transformer_block = TransformerBlock(d_model, num_heads, d_ff, theta, max_seq_len)
+    transformer_block.load_state_dict(
+        {
+            "attention.qkv_weight.W": torch.concat([
+                weights["attn.q_proj.weight"],
+                weights["attn.k_proj.weight"],
+                weights["attn.v_proj.weight"]
+            ], dim=0),
+
+            "attention.o_proj_weight.W": weights["attn.output_proj.weight"],
+
+            "norm1.g": weights["ln1.weight"],
+            "norm2.g": weights["ln2.weight"],
+
+            "feedforward.w1.W": weights["ffn.w1.weight"],
+            "feedforward.w2.W": weights["ffn.w2.weight"],
+            "feedforward.w3.W": weights["ffn.w3.weight"],
+        }
+    )
+    return transformer_block(in_features)
 
 
 def run_transformer_lm(

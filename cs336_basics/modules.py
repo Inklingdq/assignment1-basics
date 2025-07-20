@@ -3,6 +3,7 @@ from jaxtyping import Float
 import torch
 from einops import einsum, rearrange, reduce
 from torch import Tensor
+from torch import nn
 
 class Linear(torch.nn.Module):
     """
@@ -71,9 +72,9 @@ class SwiGLU(torch.nn.Module):
         super().__init__()
         self.d_model = d_model
         self.d_ff = d_ff
-        self.w1 = torch.nn.Parameter(torch.empty((d_ff, d_model), device=device, dtype=dtype))
-        self.w2 = torch.nn.Parameter(torch.empty((d_model, d_ff), device=device, dtype=dtype))
-        self.w3 = torch.nn.Parameter(torch.empty((d_ff, d_model), device=device, dtype=dtype)) 
+        self.w1 = Linear(d_model, d_ff)
+        self.w2 = Linear(d_ff, d_model)
+        self.w3 = Linear(d_model, d_ff) 
         self.device = device
         self.dtype = dtype
     
@@ -81,11 +82,11 @@ class SwiGLU(torch.nn.Module):
         """
         Applies the SwiGLU transformation to the input tensor `x`.
         """
-        x1 = einsum(x, self.w1, "... i, j i -> ... j")
+        x1 = self.w1(x)
         x1 = einsum(torch.sigmoid(x1), x1, "..., ... -> ...")
-        x3 = einsum(x, self.w3, "... i, j i -> ... j")
+        x3 = self.w3(x)
         x2 = einsum(x1, x3, "... i, ... i -> ... i")
-        return einsum(x2, self.w2, "... j, i j -> ... i")
+        return self.w2(x2)
 
 class RotaryPositionalEmbedding(torch.nn.Module):
     """
@@ -132,7 +133,7 @@ def softmax(x: torch.Tensor, i: int):
     x_exp = torch.exp(x - x_max)
     return x_exp/x_exp.sum(dim = i, keepdim=True)
 
-def scaled_dot_product_attetion(Q: Float[Tensor, " ... queries d_k"],
+def scaled_dot_product_attention(Q: Float[Tensor, " ... queries d_k"],
     K: Float[Tensor, " ... keys d_k"],
     V: Float[Tensor, " ... values d_v"],
     mask: Float[Tensor, " ... queries keys"] | None = None) -> Float[Tensor, " ... queries d_v"]:
@@ -147,3 +148,64 @@ def scaled_dot_product_attetion(Q: Float[Tensor, " ... queries d_k"],
         scores = scores.masked_fill(mask == 0, -math.inf) 
     attention_probability = softmax(scores, -1)
     return einsum(attention_probability, V, "... q k, ... k dv -> ... q dv")
+
+
+    
+
+class MultiHeadSelfAttention(nn.Module):
+    def __init__(self, d_model: int, num_heads: int, theta: float | None = None, max_seq_len: int | None = None):
+        super().__init__()
+        assert d_model % num_heads == 0, "d_model must be divisible by num_heads"
+        self.d_model = d_model
+        self.num_heads = num_heads
+        self.head_dim = d_model // num_heads
+
+        self.qkv_weight = Linear(d_model, 3 * d_model)
+        self.o_proj_weight = Linear(d_model, d_model)
+
+        if theta is not None and max_seq_len is not None:
+            self.rope = RotaryPositionalEmbedding(theta, self.head_dim, max_seq_len)
+        else:
+            self.rope = None
+
+    def forward(
+        self,
+        x: Float[Tensor, "batch seq d_model"],
+        token_positions: Tensor | None = None
+    ) -> Float[Tensor, "batch seq d_model"]:
+        B, S, _ = x.shape
+
+        qkv = self.qkv_weight(x)
+        qkv = rearrange(qkv, "B S (three h d) -> three B h S d", three = 3, h = self.num_heads, d = self.d_model//self.num_heads)
+        q, k, v = qkv[0], qkv[1], qkv[2]
+
+        # Apply RoPE if available
+        if self.rope and token_positions is not None:
+            q = self.rope(q, token_positions)
+            k = self.rope(k, token_positions)
+
+        mask = torch.tril(torch.ones(S, S), diagonal = 0)
+
+        # Scaled dot-product attention
+        attn = scaled_dot_product_attention(q, k, v, mask)
+
+        # Merge heads
+        attn = rearrange(attn, "b h s d -> b s (h d)")
+
+        # Output projection
+        return self.o_proj_weight(attn)
+
+class TransformerBlock(nn.Module):
+    def __init__(self, d_model: int, num_heads: int, d_ff: int, theta: float, max_seq_len: int):
+       super().__init__()
+       self.norm1 = RMSNorm(d_model)
+       self.norm2 = RMSNorm(d_model)
+       self.attention = MultiHeadSelfAttention(d_model, num_heads, theta, max_seq_len)
+       self.feedforward = SwiGLU(d_model, d_ff)
+    def forward(self, x: torch.Tensor, token_positions: torch.Tensor | None = None):
+        if token_positions is None:
+            seq_len = x.size(1)  # assuming x shape is (batch, seq, d_model)
+            token_positions = torch.arange(seq_len, device=x.device).unsqueeze(0)
+        x = x + self.attention(self.norm1(x), token_positions)
+        x = x + self.feedforward(self.norm2(x))
+        return x
