@@ -12,7 +12,7 @@ from torch import Tensor
 from cs336_basics.pretokenization_example import train_bpe
 
 from cs336_basics.tokenizer import tokenizer
-from cs336_basics.modules import Linear, Embedding, RMSNorm, RotaryPositionalEmbedding, SwiGLU, MultiHeadSelfAttention, TransformerBlock, softmax, scaled_dot_product_attention
+from cs336_basics.modules import Linear, Embedding, RMSNorm, RotaryPositionalEmbedding, SwiGLU, MultiHeadSelfAttention, TransformerBlock, TransformerLM, softmax, scaled_dot_product_attention
 
 
 
@@ -391,7 +391,28 @@ def run_transformer_lm(
         Float[Tensor, "batch_size sequence_length vocab_size"]: Tensor with the predicted unnormalized
         next-word distribution for each token.
     """
-    raise NotImplementedError
+    
+    transformer_lm = TransformerLM(vocab_size, context_length, num_layers, d_model, num_heads, d_ff, rope_theta)
+    state_dict = {}
+    for i in range(num_layers):
+        state_dict[f'transformer_blocks.{i}.attention.qkv_weight.W'] =  torch.concat([
+                weights[f"layers.{i}.attn.q_proj.weight"],
+                weights[f"layers.{i}.attn.k_proj.weight"],
+                weights[f"layers.{i}.attn.v_proj.weight"]
+            ], dim=0)
+        state_dict[f"transformer_blocks.{i}.attention.o_proj_weight.W"] = weights[f"layers.{i}.attn.output_proj.weight"]
+        state_dict[f"transformer_blocks.{i}.norm1.g"] = weights[f"layers.{i}.ln1.weight"]
+        state_dict[f"transformer_blocks.{i}.norm2.g"] = weights[f"layers.{i}.ln2.weight"]
+        state_dict[f"transformer_blocks.{i}.feedforward.w1.W"] = weights[f"layers.{i}.ffn.w1.weight"]
+        state_dict[f"transformer_blocks.{i}.feedforward.w2.W"] = weights[f"layers.{i}.ffn.w2.weight"]
+        state_dict[f"transformer_blocks.{i}.feedforward.w3.W"] = weights[f"layers.{i}.ffn.w3.weight"]
+
+    state_dict["embedding.weight"] = weights['token_embeddings.weight']
+    state_dict["norm.g"] = weights['ln_final.weight']
+    state_dict['lm_head.W'] = weights['lm_head.weight']
+    transformer_lm.load_state_dict(state_dict)
+    return transformer_lm(in_indices)
+    
 
 
 def run_rmsnorm(
