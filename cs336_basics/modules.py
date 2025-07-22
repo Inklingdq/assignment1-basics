@@ -1,4 +1,5 @@
 import math
+from typing import Optional
 from jaxtyping import Float
 import torch
 from einops import einsum, rearrange, reduce
@@ -225,4 +226,43 @@ class TransformerLM(nn.Module):
         x = self.norm(x)
         return self.lm_head(x)
 
+def cross_entropy(logits: torch.Tensor, target: torch.Tensor):
+    logits = logits - logits.max(dim=-1, keepdim=True).values
+    loss = -logits[torch.arange(logits.size(0)), target].mean()
+    logits = torch.exp(logits)
+    logits = einsum(logits, "batch vocab_size -> batch")
+    logits = torch.log(logits)
+    loss += logits.mean()
+    return loss
 
+class AdamW(torch.optim.Optimizer):
+    def __init__(self, params, lr: float, weight_decay: float, betas = (0.9, 0.99), eps = 1e-8):
+        if lr < 0:
+            raise ValueError(f"Invalid learning rate: {lr}")
+        beta1, beta2 = betas
+        defaults = {"lr": lr, "weight_decay": weight_decay, "beta1": beta1, "beta2": beta2, "eps": eps}
+        super().__init__(params, defaults)
+    def step(self, closure: Optional[callable] = None):
+        loss = None if closure is None else closure()
+        for group in self.param_groups:
+            lr = group["lr"]
+            beta1, beta2 = group['beta1'], group['beta2']
+            eps = group['eps']
+            weight_decay = group['weight_decay']
+            for p in group['params']:
+                if p.grad is None:
+                    continue
+                state = self.state[p]
+                grad = p.grad.data
+                m = state.get("m", torch.zeros_like(p.data))
+                v = state.get("v", torch.zeros_like(p.data))
+                t = state.get("t", 1)
+                m = beta1 * m + (1 - beta1) * grad
+                v = beta2 * v + (1 - beta2) * grad**2
+                lrt = lr * math.sqrt(1 - beta2**t)/(1- beta1**t)
+                p.data = p.data - lrt * m/(torch.sqrt(v) + eps)
+                p.data = p.data - lr * weight_decay * p.data
+                state['m'] = m
+                state['v'] = v
+                state['t'] = t + 1
+        return loss
