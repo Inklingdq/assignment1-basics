@@ -1,5 +1,6 @@
 import math
-from typing import Optional
+import random
+from typing import Iterable, Optional
 from jaxtyping import Float
 import torch
 from einops import einsum, rearrange, reduce
@@ -266,3 +267,35 @@ class AdamW(torch.optim.Optimizer):
                 state['v'] = v
                 state['t'] = t + 1
         return loss
+
+def lr_cosine_schedule(t, lmin, lmax, tw, tc):
+    if t < tw:
+        return t/tw * lmax
+    elif t < tc:
+            return lmin + 0.5 * ( 1 + math.cos((t-tw)/(tc-tw) * math.pi)) * (lmax - lmin)
+    else:
+        return lmin
+
+def gradient_clipping(parameters: Iterable[torch.nn.Parameter], M: float):
+    scale = 0.0
+    for p in parameters:
+        if p.grad is None:
+            continue
+        scale += torch.norm(p.grad, p = 2) ** 2
+        
+    scale = scale ** 0.5
+    if scale > M:
+        for p in parameters:
+            if p.grad is not None:
+                p.grad *= M / (scale + 1e-6)
+
+def get_batch(x: torch.Tensor, batch_size: int, context_length: int, device):
+    first, second = torch.Tensor(batch_size, context_length), torch.Tensor(batch_size, context_length)
+    k = 0
+    for i in range(batch_size):
+        k = random.randint(0, len(x) - context_length - 1)
+        for j in range(context_length):
+            first[i][j] = x[k + j]
+            second[i][j] = x [k + j + 1]
+    return (first.to(device), second.to(device))
+
