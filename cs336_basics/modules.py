@@ -1,5 +1,6 @@
 import math
-import random
+import numpy as np
+import numpy.typing as npt
 from typing import Iterable, Optional
 from jaxtyping import Float
 import torch
@@ -289,13 +290,18 @@ def gradient_clipping(parameters: Iterable[torch.nn.Parameter], M: float):
             if p.grad is not None:
                 p.grad *= M / (scale + 1e-6)
 
-def get_batch(x: torch.Tensor, batch_size: int, context_length: int, device):
-    first, second = torch.Tensor(batch_size, context_length), torch.Tensor(batch_size, context_length)
-    k = 0
-    for i in range(batch_size):
-        k = random.randint(0, len(x) - context_length - 1)
-        for j in range(context_length):
-            first[i][j] = x[k + j]
-            second[i][j] = x [k + j + 1]
-    return (first.to(device), second.to(device))
+
+def get_batch(x: npt.NDArray[np.int32], batch_size: int, context_length: int, device: torch.device):
+    # Sample random start positions
+    starts = np.random.randint(0, len(x) - context_length, size=(batch_size,))
+
+    # Allocate array of shape (batch_size, context_length)
+    first_np = np.stack([x[i : i + context_length] for i in starts])
+    second_np = np.stack([x[i + 1 : i + context_length + 1] for i in starts])
+
+    # Convert once to torch tensors and send to device
+    first = torch.from_numpy(first_np).to(device)
+    second = torch.from_numpy(second_np).to(device)
+
+    return first, second
 
