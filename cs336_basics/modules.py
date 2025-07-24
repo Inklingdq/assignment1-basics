@@ -1,4 +1,6 @@
 import math
+import os
+import typing
 import numpy as np
 import numpy.typing as npt
 from typing import Iterable, Optional
@@ -305,3 +307,15 @@ def get_batch(x: npt.NDArray[np.int32], batch_size: int, context_length: int, de
 
     return first, second
 
+def save_checkpoint(model: nn.Module, optimizer: torch.optim.Optimizer, iteration: int, out: str | os.PathLike | typing.BinaryIO | typing.IO[bytes]):
+    dic = {}
+    dic['iteration'] = iteration
+    dic['model'] = model.state_dict()
+    dic['optimizer'] = optimizer.state_dict()
+    torch.save(dic, out)
+
+def load_checkpoint(src: str | os.PathLike | typing.BinaryIO | typing.IO[bytes], model: torch.nn.Module, optimizer: torch.optim.Optimizer):
+    dic = torch.load(src)
+    model = model.load_state_dict(dic["model"])
+    optimizer = optimizer.load_state_dict(dic['optimizer'])
+    return dic['iteration']
