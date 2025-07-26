@@ -130,13 +130,30 @@ class RotaryPositionalEmbedding(torch.nn.Module):
             cos = cos.unsqueeze(0)
         return self.apply_rotary(x, sin, cos)
 
-def softmax(x: torch.Tensor, i: int):
+def softmax(x: torch.Tensor, i: int, t = 1):
     '''
     Apply softmax operationon the ith dimension of the input tensor.
     '''
+    x = x / t
     x_max, _ = torch.max(x, dim = i, keepdim = True)
     x_exp = torch.exp(x - x_max)
     return x_exp/x_exp.sum(dim = i, keepdim=True)
+
+def top_p_sampling(x: Tensor, alpha:float) -> Tensor:
+    '''
+    Implement nucelus or top-p sampling. Modify the sampling distribution by trucating
+    low propbability words.
+    '''
+    x.sort(int = -1, descending = True)
+    tot = 0.0
+    for i in range(len(x)):
+        tot +=  x[i]
+        if x >= alpha:
+            break
+    if x < alpha:
+        return x
+    else:
+        torch.norm(x[:i])
 
 def scaled_dot_product_attention(Q: Float[Tensor, " ... queries d_k"],
     K: Float[Tensor, " ... keys d_k"],

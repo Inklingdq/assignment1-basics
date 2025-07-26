@@ -1,11 +1,21 @@
 import argparse
+import time
 
 from cs336_basics.modules import AdamW, TransformerLM, cross_entropy, get_batch, gradient_clipping, lr_cosine_schedule, save_checkpoint
 import numpy as np
-import torch
+import wandb
 
 
 def train(args):
+
+    wandb.init(project="LMtransofrmer-Exp", config={
+        "model": "GPT2-XL",
+        "name": f"run-{args.experiment_name}-{time.strftime('%Y%m%d-%H%M%S')}",
+        "context_length": args.context_length,
+        "num_layers": args.num_layers,
+        "vocab_size": args.vocab_size,
+        "dataset": args.dataset_path
+    })
     print(f"Training on {args.dataset_path}")
     print(f"Batch size: {args.batch_size}, LR: {args.lr}")
     print(f"Saving to {args.save_dir}, using device {args.device}")
@@ -20,7 +30,7 @@ def train(args):
             )    
     optimizer = AdamW(model.parameters(), lr = args.lr, weight_decay = args.weight_decay)
     data = np.load(args.dataset_path, mmap_mode='r')
-
+    start_time = time.time()
     for i, (x,y) in get_batch(data, args.batch_size, args.context_length):
         logits = model(x)
         loss = cross_entropy(logits, y)
@@ -36,17 +46,23 @@ def train(args):
 
         if i % args.log_interval == 0:
             print(f"Iter {i}, Loss: {loss.item():.4f}")
+            wandb.log({
+                "train.loss": loss.item(),
+                "step": i,
+                "time": time.time() - start_time
+            }, step = i)
             save_checkpoint(model, optimizer, i, f"{args.save_dir}/model_iteration{i}.pt")
  
         
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Train a language model.")
+    parser.add_argument('--experiment-name', type = str, default = "test", help = "Name of experiment")
     parser.add_argument("--dataset-path", type=str, required = True, help = "Dataset file path")
     parser.add_argument("--batch-size", type=int, default = 5, help = "Batch Size")
     parser.add_argument('--lr', type=float, default=3e-5, help='Learning rate')
     parser.add_argument('--save-dir', type=str, default='./checkpoints', help='Directory to save model checkpoints')
     parser.add_argument('--log-interval', type=int, default=100, help='Logging interval')
-
+    parser.add_argument('--device', type = str, default = "mps", help = "Device to run inference on")
 
     # Add model hyperparameters
     parser.add_argument('--vocab_size', type=int, required=True)
