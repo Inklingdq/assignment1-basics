@@ -14,13 +14,11 @@ class Linear(torch.nn.Module):
     """
     A simple linear layer that applies a linear transformation to the input.
     """
-    def __init__(self, in_features: int, out_features: int, device = None, dtype = None):
+    def __init__(self, in_features: int, out_features: int, dtype = None):
         super().__init__()
         self.in_features = in_features
         self.out_features = out_features
-        self.device = device
-        self.dtype = dtype
-        self.W = torch.nn.Parameter(torch.empty((out_features, in_features), device=device, dtype=dtype))
+        self.W = torch.nn.Parameter(torch.empty((out_features, in_features), dtype=dtype))
         torch.nn.init.normal_(self.W, 0, 2/(in_features + out_features))
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
@@ -33,13 +31,11 @@ class Embedding(torch.nn.Module):
     """
     A simple embedding layer that maps input indices to dense vectors.
     """
-    def __init__(self, num_embeddings: int, embedding_dim: int, device = None, dtype = None):
+    def __init__(self, num_embeddings: int, embedding_dim: int, dtype = None):
         super().__init__()
         self.num_embeddings = num_embeddings
         self.embedding_dim = embedding_dim
-        self.device = device
-        self.dtype = dtype
-        self.weight = torch.nn.Parameter(torch.empty((num_embeddings, embedding_dim), device=device, dtype=dtype))
+        self.weight = torch.nn.Parameter(torch.empty((num_embeddings, embedding_dim), dtype=dtype))
         torch.nn.init.normal_(self.weight, 0, 2/(embedding_dim + num_embeddings))
 
     def forward(self, indices: torch.LongTensor) -> torch.Tensor:
@@ -52,11 +48,11 @@ class RMSNorm(torch.nn.Module):
     """
     A simple RMSNorm layer that normalizes the input tensor.
     """
-    def __init__(self, d_model: int, eps: float = 1e-5, device = None, dtype = None):
+    def __init__(self, d_model: int, eps: float = 1e-5, dtype = None):
         super().__init__()
         self.d_model = d_model
         self.eps = eps
-        self.g = torch.nn.Parameter(torch.ones(d_model, device=device, dtype=dtype))
+        self.g = torch.nn.Parameter(torch.ones(d_model, dtype=dtype))
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """
         Applies RMS normalization to the input tensor `x`.
@@ -73,15 +69,13 @@ class SwiGLU(torch.nn.Module):
     """
     A simple SwiGLU feed-forward network.
     """
-    def __init__(self, d_model: int, d_ff:int, device = None, dtype = None):
+    def __init__(self, d_model: int, d_ff:int, dtype = None):
         super().__init__()
         self.d_model = d_model
         self.d_ff = d_ff
         self.w1 = Linear(d_model, d_ff)
         self.w2 = Linear(d_ff, d_model)
         self.w3 = Linear(d_model, d_ff) 
-        self.device = device
-        self.dtype = dtype
     
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """
@@ -97,21 +91,17 @@ class RotaryPositionalEmbedding(torch.nn.Module):
     """
     A simple Rotary Positional Embedding layer.
     """
-    def __init__(self, theta: float, d_k: int, max_seq_len: int, device = None):
+    def __init__(self, theta: float, d_k: int, max_seq_len: int):
         super().__init__()
         self.theta = theta
         self.d_k = d_k
         self.max_seq_len = max_seq_len
-        self.device = device
-        inv_freq = 1 / (theta ** (2 * torch.arange(0, d_k // 2, device=device) / d_k))
-        positions = torch.arange(max_seq_len, device=device)
+        inv_freq = 1 / (theta ** (2 * torch.arange(0, d_k // 2) / d_k))
+        positions = torch.arange(max_seq_len)
         angle = einsum(positions, inv_freq, "i, j -> i j")
 
-        self.cos = angle.cos()
-        self.sin = angle.sin()
-
-        self.register_buffer("cos_rot", self.cos, persistent=False)
-        self.register_buffer("sin_rot", self.sin, persistent=False)
+        self.register_buffer("cos", angle.cos(), persistent=False)
+        self.register_buffer("sin", angle.sin(), persistent=False)
     def apply_rotary(self, x: torch.Tensor, sin: torch.Tensor, cos: torch.Tensor) -> torch.Tensor:
         """
         Applies the rotary positional embedding to the input tensor `x` using the provided sine and cosine
@@ -206,7 +196,7 @@ class MultiHeadSelfAttention(nn.Module):
             q = self.rope(q, token_positions)
             k = self.rope(k, token_positions)
 
-        mask = torch.tril(torch.ones(S, S), diagonal = 0)
+        mask = torch.tril(torch.ones(S, S, device = x.device), diagonal = 0)
 
         # Scaled dot-product attention
         attn = scaled_dot_product_attention(q, k, v, mask)
@@ -319,9 +309,8 @@ def get_batch(x: npt.NDArray[np.int32], batch_size: int, context_length: int, de
     second_np = np.stack([x[i + 1 : i + context_length + 1] for i in starts])
 
     # Convert once to torch tensors and send to device
-    first = torch.from_numpy(first_np).to(device)
-    second = torch.from_numpy(second_np).to(device)
-
+    first = torch.from_numpy(first_np.astype(np.int32)).to(device)
+    second = torch.from_numpy(second_np.astype(np.int32)).to(device)
     return first, second
 
 def save_checkpoint(model: nn.Module, optimizer: torch.optim.Optimizer, iteration: int, out: str | os.PathLike | typing.BinaryIO | typing.IO[bytes]):

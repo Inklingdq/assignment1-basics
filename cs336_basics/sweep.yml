@@ -1,0 +1,10 @@
+program: train_uv.sh
+method: bayes
+metric:
+  name: val/loss
+  goal: minimize
+parameters:
+  learning_rate:
+    values: [1e-4, 2e-4, 3e-4, 5e-4]
+  weight_decay:
+    values: [0.0, 0.01, 0.1]

@@ -1,0 +1,16 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Python: train.py",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/cs336_basics/train.py",
+            "args": [
+                "--dataset-path", "results/TinyStoriesV2-GPT4-train_sampled_encoded.bin",
+                "--log-interval", "10"
+            ],
+            "console": "integratedTerminal"
+        }
+    ]
+}
