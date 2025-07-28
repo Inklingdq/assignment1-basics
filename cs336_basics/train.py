@@ -34,7 +34,7 @@ def train(args):
         theta=args.theta,
         )
     model.to(args.device)    
-    model = torch.compile(model, backend="aot_eager")
+    #model = torch.compile(model, backend="aot_eager")
     optimizer = AdamW(model.parameters(), lr = args.lr, weight_decay = args.weight_decay)
     data = np.memmap(args.dataset_path, dtype=np.uint16, mode='r')
     iter = 0
@@ -90,7 +90,7 @@ def train(args):
                     loss = cross_entropy(logits_flatten, y_flatten)
                     val_losses.append(loss.item())
                     preds = logits.argmax(dim = -1)
-                    val_accuracy.append((preds == y).float().mean().item())
+                    val_accuracy.append((preds == y_val).float().mean().item())
             model.train()
             print(f"Iter {i}, Validation Loss: {loss.item():.4f}")
             wandb.log({
