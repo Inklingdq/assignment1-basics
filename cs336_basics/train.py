@@ -12,7 +12,7 @@ def train(args):
     if args.wandb_id:
        wandb.init(project="LMtransofrmer-Exp", id = args.wandb_id, resume ="allow")
     else: 
-        wandb.init(project="LMtransofrmer-Exp", 
+        wandb.init(project="LMtransofrmer-Exp-Batchsize", 
             config={
             "model": "GPT2-XL",
             "name": f"run-{args.experiment_name}-{time.strftime('%Y%m%d-%H%M%S')}",
@@ -55,8 +55,6 @@ def train(args):
         current_lr = lr_cosine_schedule(i, args.l_min, args.lr, args.warmup_steps, args.cosine_annealing_steps)
         for group in optimizer.param_groups:
             group["lr"] = current_lr
-        optimizer.step()
-        optimizer.zero_grad()
 
         if i % args.log_interval == 0:
             preds = logits.argmax(dim = -1)
@@ -75,7 +73,7 @@ def train(args):
                 "step": i,
                 "time": time.time() - start_time
             }, step = i)
-            if i % 500 == 0:
+            if i % 40000 == 0:
                 save_checkpoint(model, optimizer, i, f"{args.save_dir}/model_iteration{i}.pt")
             # Validation loss
             model.eval()
@@ -99,6 +97,8 @@ def train(args):
                 "step": i,
                 "time": time.time() - start_time
             }, step = i)
+        optimizer.step()
+        optimizer.zero_grad()
             
 
  
@@ -113,7 +113,7 @@ if __name__ == "__main__":
     parser.add_argument("--batch-size", type=int, default = 32, help = "Batch Size")
     #parser.add_argument("--batch-size", type=int, default = 5, help = "Batch Size")
     parser.add_argument("--total-steps", type=int, default = 5000, help = "Dataset file path")
-    parser.add_argument('--lr', type=float, default=3e-5, help='Learning rate')
+    parser.add_argument('--lr', type=float, default=1e-3, help='Learning rate')
     parser.add_argument('--save-dir', type=str, default='checkpoints', help='Directory to save model checkpoints')
     parser.add_argument('--log-interval', type=int, default=100, help='Logging interval')
     parser.add_argument('--device', type = str, default = "mps", help = "Device to run inference on")
@@ -133,7 +133,7 @@ if __name__ == "__main__":
     parser.add_argument('--gradient-clip', type=float, default=1.0)
 
     # LR scheduler
-    parser.add_argument('--l-min', type=float, default=1e-6, help="Minimum learning rate")
+    parser.add_argument('--l-min', type=float, default=5e-4, help="Minimum learning rate")
     parser.add_argument('--warmup-steps', type=int, default=1000, help="Warmup steps before cosine decay")
     parser.add_argument('--cosine-annealing-steps', type=int, default=5000, help="Total steps for cosine decay")
     
